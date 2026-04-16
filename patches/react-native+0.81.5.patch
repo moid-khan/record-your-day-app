@@ -1,0 +1,169 @@
+diff --git a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm
+index 1494fd2..dac16f2 100644
+--- a/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm
++++ b/node_modules/react-native/React/Fabric/Mounting/ComponentViews/ScrollView/RCTScrollViewComponentView.mm
+@@ -94,6 +94,10 @@ @interface RCTScrollViewComponentView () <
+ @implementation RCTScrollViewComponentView {
+   ScrollViewShadowNode::ConcreteState::Shared _state;
+   CGSize _contentSize;
++  // Flag to track when the view is being removed from the hierarchy.
++  // Used to prevent event dispatch that can crash when the Fabric
++  // instanceHandle becomes null during component teardown.
++  BOOL _isBeingRemovedFromHierarchy;
+   NSTimeInterval _lastScrollEventDispatchTime;
+   NSTimeInterval _scrollEventThrottle;
+   // Flag indicating whether the scrolling that is currently happening
+@@ -133,6 +137,7 @@ - (instancetype)initWithFrame:(CGRect)frame
+     ((RCTEnhancedScrollView *)_scrollView).overridingDelegate = self;
+     _isUserTriggeredScrolling = NO;
+     _shouldUpdateContentInsetAdjustmentBehavior = YES;
++    _isBeingRemovedFromHierarchy = NO;
+     _automaticallyAdjustKeyboardInsets = NO;
+     [self addSubview:_scrollView];
+ 
+@@ -628,6 +633,7 @@ - (void)prepareForRecycle
+   _scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+   _shouldUpdateContentInsetAdjustmentBehavior = YES;
+   _isUserTriggeredScrolling = NO;
++  _isBeingRemovedFromHierarchy = NO;
+   CGRect oldFrame = self.frame;
+   self.frame = CGRectZero;
+   self.frame = oldFrame;
+@@ -649,7 +655,8 @@ - (void)scrollViewWillEndDragging:(UIScrollView *)scrollView
+     }
+   }
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -674,7 +681,8 @@ - (void)scrollViewDidScroll:(UIScrollView *)scrollView
+   NSTimeInterval now = CACurrentMediaTime();
+   if ((_lastScrollEventDispatchTime == 0) || (now - _lastScrollEventDispatchTime > _scrollEventThrottle)) {
+     _lastScrollEventDispatchTime = now;
+-    if (_eventEmitter) {
++    // Safety check: don't dispatch if being removed from hierarchy
++    if (_eventEmitter && !_isBeingRemovedFromHierarchy) {
+       static_cast<const ScrollViewEventEmitter &>(*_eventEmitter).onScroll(scrollMetrics);
+     }
+ 
+@@ -697,7 +705,8 @@ - (BOOL)scrollViewShouldScrollToTop:(UIScrollView *)scrollView
+ 
+ - (void)scrollViewDidScrollToTop:(UIScrollView *)scrollView
+ {
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -710,7 +719,8 @@ - (void)scrollViewWillBeginDragging:(UIScrollView *)scrollView
+ {
+   [self _forceDispatchNextScrollEvent];
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -722,7 +732,8 @@ - (void)scrollViewDidEndDragging:(UIScrollView *)scrollView willDecelerate:(BOOL
+ {
+   [self _forceDispatchNextScrollEvent];
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -740,7 +751,8 @@ - (void)scrollViewWillBeginDecelerating:(UIScrollView *)scrollView
+ {
+   [self _forceDispatchNextScrollEvent];
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -751,7 +763,8 @@ - (void)scrollViewDidEndDecelerating:(UIScrollView *)scrollView
+ {
+   [self _forceDispatchNextScrollEvent];
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -767,6 +780,18 @@ - (void)scrollViewDidEndScrollingAnimation:(UIScrollView *)scrollView
+   [self _handleFinishedScrolling:scrollView];
+ }
+ 
++- (void)willMoveToWindow:(UIWindow *)newWindow
++{
++  // Track when view is being removed from the window hierarchy.
++  // This is called BEFORE didMoveToWindow, so we can use this flag
++  // to prevent event dispatch during teardown and avoid crashes with null instanceHandle.
++  // Similar fix applied to react-native-screens for the same Fabric crash issue.
++  if (newWindow == nil && self.window != nil) {
++    _isBeingRemovedFromHierarchy = YES;
++  }
++  [super willMoveToWindow:newWindow];
++}
++
+ - (void)didMoveToWindow
+ {
+   [super didMoveToWindow];
+@@ -774,13 +799,17 @@ - (void)didMoveToWindow
+   if (!self.window) {
+     // The view is being removed, ensure that the scroll end event is dispatched
+     [self _handleScrollEndIfNeeded];
++  } else {
++    // Reset flag when view is added to a window
++    _isBeingRemovedFromHierarchy = NO;
+   }
+ }
+ 
+ - (void)_handleScrollEndIfNeeded
+ {
+   if (_scrollView.isDecelerating || !_scrollView.isTracking) {
+-    if (!_eventEmitter) {
++    // Safety check: don't dispatch if being removed from hierarchy
++    if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+       return;
+     }
+     static_cast<const ScrollViewEventEmitter &>(*_eventEmitter).onMomentumScrollEnd([self _scrollViewMetrics]);
+@@ -795,7 +824,8 @@ - (void)_handleFinishedScrolling:(UIScrollView *)scrollView
+   [self _forceDispatchNextScrollEvent];
+   [self scrollViewDidScroll:scrollView];
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -807,7 +837,8 @@ - (void)scrollViewWillBeginZooming:(UIScrollView *)scrollView withView:(nullable
+ {
+   [self _forceDispatchNextScrollEvent];
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 
+@@ -818,7 +849,8 @@ - (void)scrollViewDidEndZooming:(UIScrollView *)scrollView withView:(nullable UI
+ {
+   [self _forceDispatchNextScrollEvent];
+ 
+-  if (!_eventEmitter) {
++  // Safety check: don't dispatch if being removed from hierarchy
++  if (!_eventEmitter || _isBeingRemovedFromHierarchy) {
+     return;
+   }
+ 

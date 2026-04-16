@@ -1,0 +1,189 @@
+diff --git a/node_modules/react-native-screens/ios/RNSScreen.h b/node_modules/react-native-screens/ios/RNSScreen.h
+index d8c2b13..40e9c7b 100644
+--- a/node_modules/react-native-screens/ios/RNSScreen.h
++++ b/node_modules/react-native-screens/ios/RNSScreen.h
+@@ -134,6 +134,7 @@ namespace react = facebook::react;
+ @property (nonatomic, readonly) BOOL hasHeaderConfig;
+ @property (nonatomic, readonly, getter=isMarkedForUnmountInCurrentTransaction)
+     BOOL markedForUnmountInCurrentTransaction;
++@property (nonatomic) BOOL isBeingRemovedFromHierarchy;
+ 
+ /**
+  * Whether the snapshot for the transition made for JS-popped views should be taken after view updates or not.
+diff --git a/node_modules/react-native-screens/ios/RNSScreen.mm b/node_modules/react-native-screens/ios/RNSScreen.mm
+index fdbe45a..1ed0e23 100644
+--- a/node_modules/react-native-screens/ios/RNSScreen.mm
++++ b/node_modules/react-native-screens/ios/RNSScreen.mm
+@@ -144,6 +144,7 @@ - (void)initCommonProps
+   _sheetContentHeight = 0.0;
+ #ifdef RCT_NEW_ARCH_ENABLED
+   _markedForUnmountInCurrentTransaction = NO;
++  _isBeingRemovedFromHierarchy = NO;
+ #endif // RCT_NEW_ARCH_ENABLED
+ }
+ 
+@@ -572,8 +573,8 @@ - (void)addSubview:(UIView *)view
+ - (void)notifyDismissedWithCount:(int)dismissCount
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  // If screen is already unmounted then there will be no event emitter
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onDismissed(react::RNSScreenEventEmitter::OnDismissed{.dismissCount = dismissCount});
+   }
+@@ -593,8 +594,8 @@ - (void)notifyDismissedWithCount:(int)dismissCount
+ - (void)notifyDismissCancelledWithDismissCount:(int)dismissCount
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  // If screen is already unmounted then there will be no event emitter
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onNativeDismissCancelled(
+             react::RNSScreenEventEmitter::OnNativeDismissCancelled{.dismissCount = dismissCount});
+@@ -609,8 +610,8 @@ - (void)notifyDismissCancelledWithDismissCount:(int)dismissCount
+ - (void)notifyWillAppear
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  // If screen is already unmounted then there will be no event emitter
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onWillAppear(react::RNSScreenEventEmitter::OnWillAppear{});
+   }
+@@ -631,8 +632,14 @@ - (void)notifyWillDisappear
+     [self endEditing:YES];
+   }
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  // If screen is already unmounted then there will be no event emitter
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric to prevent crashes during view teardown.
++  // In Fabric, the instanceHandle inside the event emitter can be null even when
++  // _eventEmitter pointer is valid. This happens during auth state transitions
++  // when the Fabric tree is cleaned up before UIKit lifecycle events complete.
++  // We check multiple flags:
++  // - _markedForUnmountInCurrentTransaction: set when screen is removed from stack
++  // - _isBeingRemovedFromHierarchy: set in willMoveToWindow:nil before viewWillDisappear
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onWillDisappear(react::RNSScreenEventEmitter::OnWillDisappear{});
+   }
+@@ -646,8 +653,8 @@ - (void)notifyWillDisappear
+ - (void)notifyAppear
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  // If screen is already unmounted then there will be no event emitter
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onAppear(react::RNSScreenEventEmitter::OnAppear{});
+   }
+@@ -665,8 +672,8 @@ - (void)notifyAppear
+ - (void)notifyDisappear
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  // If screen is already unmounted then there will be no event emitter
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onDisappear(react::RNSScreenEventEmitter::OnDisappear{});
+   }
+@@ -680,7 +687,8 @@ - (void)notifyDisappear
+ - (void)notifySheetDetentChangeToIndex:(NSInteger)newDetentIndex isStable:(BOOL)isStable
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     int index = static_cast<int>(newDetentIndex);
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onSheetDetentChanged(
+@@ -700,7 +708,8 @@ - (void)notifySheetDetentChangeToIndex:(NSInteger)newDetentIndex isStable:(BOOL)
+ - (void)notifyHeaderHeightChange:(double)headerHeight
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onHeaderHeightChange(react::RNSScreenEventEmitter::OnHeaderHeightChange{.headerHeight = headerHeight});
+   }
+@@ -722,7 +731,8 @@ - (void)notifyHeaderHeightChange:(double)headerHeight
+ - (void)notifyGestureCancel
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onGestureCancel(react::RNSScreenEventEmitter::OnGestureCancel{});
+   }
+@@ -785,7 +795,8 @@ - (void)notifyFinishTransitioning
+ - (void)notifyTransitionProgress:(double)progress closing:(BOOL)closing goingForward:(BOOL)goingForward
+ {
+ #ifdef RCT_NEW_ARCH_ENABLED
+-  if (_eventEmitter != nullptr) {
++  // Enhanced safety check for Fabric - see notifyWillDisappear for details
++  if (_eventEmitter != nullptr && !_markedForUnmountInCurrentTransaction && !_isBeingRemovedFromHierarchy) {
+     std::dynamic_pointer_cast<const react::RNSScreenEventEmitter>(_eventEmitter)
+         ->onTransitionProgress(
+             react::RNSScreenEventEmitter::OnTransitionProgress{
+@@ -810,6 +821,15 @@ - (void)notifyTransitionProgress:(double)progress closing:(BOOL)closing goingFor
+ 
+ - (void)willMoveToWindow:(UIWindow *)newWindow
+ {
++#ifdef RCT_NEW_ARCH_ENABLED
++  // Track when view is being removed from the window hierarchy.
++  // This is called BEFORE viewWillDisappear on the controller, so we can use this flag
++  // to prevent event dispatch during teardown and avoid crashes with null instanceHandle.
++  if (newWindow == nil && self.window != nil) {
++    _isBeingRemovedFromHierarchy = YES;
++  }
++#endif
++
+   if (@available(iOS 26, *)) {
+     // In iOS 26, as soon as another screen appears in transition, it is interactable
+     // To avoid glitches resulting from clicking buttons mid transition, we temporarily disable all interactions
+@@ -965,6 +985,11 @@ - (BOOL)isTransparentModal
+ 
+ - (void)invalidateImpl
+ {
++#ifdef RCT_NEW_ARCH_ENABLED
++  // Mark as being removed to prevent any event dispatch during cleanup.
++  // This is called when Fabric is unmounting the component.
++  _isBeingRemovedFromHierarchy = YES;
++#endif
+   _controller = nil;
+   [_sheetsScrollView removeObserver:self forKeyPath:@"bounds" context:nil];
+ }
+@@ -1662,6 +1687,12 @@ - (void)viewWillAppear:(BOOL)animated
+ 
+ - (void)viewWillDisappear:(BOOL)animated
+ {
++#ifdef RCT_NEW_ARCH_ENABLED
++  // CRITICAL: Set the flag BEFORE anything else to prevent crashes
++  // when the Fabric instanceHandle is already null during auth state transitions.
++  // This must happen before [super viewWillDisappear:] and notifyWillDisappear.
++  self.screenView.isBeingRemovedFromHierarchy = YES;
++#endif
+   [super viewWillDisappear:animated];
+   // self.navigationController might be null when we are dismissing a modal
+   if (!self.transitionCoordinator.isInteractive && self.navigationController != nil) {
+@@ -1719,6 +1750,11 @@ - (void)viewDidAppear:(BOOL)animated
+ 
+ - (void)viewDidDisappear:(BOOL)animated
+ {
++#ifdef RCT_NEW_ARCH_ENABLED
++  // CRITICAL: Set the flag BEFORE anything else to prevent crashes.
++  // See viewWillDisappear for details.
++  self.screenView.isBeingRemovedFromHierarchy = YES;
++#endif
+   [super viewDidDisappear:animated];
+   if (self.parentViewController == nil && self.presentingViewController == nil) {
+     if (self.screenView.preventNativeDismiss) {
