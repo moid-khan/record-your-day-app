@@ -1,0 +1,8 @@
+@@ -134,6 +134,7 @@
+ @property (nonatomic, readonly) BOOL hasHeaderConfig;
+ @property (nonatomic, readonly, getter=isMarkedForUnmountInCurrentTransaction)
+     BOOL markedForUnmountInCurrentTransaction;
++@property (nonatomic) BOOL isBeingRemovedFromHierarchy;
+ 
+ /**
+  * Whether the snapshot for the transition made for JS-popped views should be taken after view updates or not.
